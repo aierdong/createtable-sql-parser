@@ -126,9 +126,9 @@ func (v *MssqlVisitor) VisitColumn_definition(ctx *parser.Column_definitionConte
 func (v *MssqlVisitor) VisitData_type(ctx *parser.Data_typeContext) interface{} {
 	var originalType string
 	if ctx.Id_() != nil {
-		originalType = ctx.Id_().GetText()
+		originalType = strings.ToLower(ctx.Id_().GetText())
 		if ctx.Id_().Keyword() != nil {
-			originalType = ctx.Id_().Keyword().GetText()
+			originalType = strings.ToLower(ctx.Id_().Keyword().GetText())
 		}
 	}
 
@@ -137,7 +137,7 @@ func (v *MssqlVisitor) VisitData_type(ctx *parser.Data_typeContext) interface{} 
 		return nil
 	}
 
-	simplifiedType, exists := types.TSqlTypeMap[strings.ToLower(originalType)]
+	simplifiedType, exists := types.TSqlTypeMap[originalType]
 	if !exists {
 		v.Err = fmt.Errorf("unsupported data type: %s", originalType)
 		return nil
@@ -161,6 +161,14 @@ func (v *MssqlVisitor) VisitData_type(ctx *parser.Data_typeContext) interface{} 
 		if len(ctx.AllDECIMAL()) > 1 {
 			if scale, err := strconv.Atoi(ctx.DECIMAL(1).GetText()); err == nil {
 				col.Scale = scale
+			}
+		}
+		if originalType == "char" || originalType == "nchar" {
+			if col.Length == 0 {
+				v.Err = errors.New("char type must have a length")
+				return nil
+			} else {
+				col.FixLength = true
 			}
 		}
 	}

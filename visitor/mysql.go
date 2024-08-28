@@ -79,7 +79,7 @@ func (v *MySQLVisitor) VisitTableElementList(ctx *parser.TableElementListContext
 		dataType := v.getDataType(colDef)
 
 		// dataType: integer, string..., and length, scala
-		simpleDataType, err := v.parseColumnType(dataType)
+		column, err := v.parseColumnType(dataType)
 		if err != nil {
 			v.Err = err
 			return nil
@@ -88,20 +88,20 @@ func (v *MySQLVisitor) VisitTableElementList(ctx *parser.TableElementListContext
 		// column comment
 		for _, att := range colDef.FieldDefinition().AllColumnAttribute() {
 			if att.COMMENT_SYMBOL() != nil && att.TextLiteral() != nil {
-				simpleDataType.Comment = strings.Trim(att.TextLiteral().GetText(), "'")
+				column.Comment = strings.Trim(att.TextLiteral().GetText(), "'")
 			}
 			if att.AUTO_INCREMENT_SYMBOL() != nil {
-				simpleDataType.AutoIncrement = true
+				column.AutoIncrement = true
 			}
 		}
 
 		v.Table.Columns = append(v.Table.Columns, &types.AntlrColumn{
 			Name:          strings.Trim(colDef.ColumnName().GetText(), "`"),
-			Type:          simpleDataType.Type,
-			Length:        simpleDataType.Length,
-			Scale:         simpleDataType.Scale,
-			Comment:       simpleDataType.Comment,
-			AutoIncrement: simpleDataType.AutoIncrement,
+			Type:          column.Type,
+			Length:        column.Length,
+			Scale:         column.Scale,
+			Comment:       column.Comment,
+			AutoIncrement: column.AutoIncrement,
 		})
 	}
 	return nil
@@ -129,40 +129,50 @@ func (v *MySQLVisitor) VisitCreateTableOptions(ctx *parser.CreateTableOptionsCon
 	return nil
 }
 
-func (v *MySQLVisitor) parseColumnType(dataType string) (simpleDatType types.AntlrColumn, err error) {
+func (v *MySQLVisitor) parseColumnType(dataType string) (column *types.AntlrColumn, err error) {
 	baseType := ""
 
 	// Regular expressions to match different data types and their lengths/scales
 	re := regexp.MustCompile(`(?i)(\w+)(?:\((\d+)(?:,(\d+))?\))?`)
 	matches := re.FindStringSubmatch(dataType)
 
+	column = &types.AntlrColumn{}
+
 	if len(matches) > 0 {
 		baseType = strings.ToLower(matches[1])
 		if simplifiedType, exists := types.MySQLTypeMap[baseType]; exists {
-			simpleDatType.Type = simplifiedType
+			column.Type = simplifiedType
 		} else {
-			simpleDatType.Type = ""
+			column.Type = ""
 		}
 
 		if len(matches) > 2 && matches[2] != "" {
-			simpleDatType.Length, _ = strconv.Atoi(matches[2])
+			column.Length, _ = strconv.Atoi(matches[2])
 		}
 		if len(matches) > 3 && matches[3] != "" {
-			simpleDatType.Scale, _ = strconv.Atoi(matches[3])
+			column.Scale, _ = strconv.Atoi(matches[3])
 		}
 
-		if simpleDatType.Type == "numeric" && simpleDatType.Scale == 0 {
-			simpleDatType.Length = 2
-			simpleDatType.Scale = 2
+		if column.Type == "numeric" && column.Scale == 0 {
+			column.Length = 2
+			column.Scale = 2
+		}
+
+		if baseType == "char" {
+			if column.Length == 0 {
+				return nil, errors.New("char type must have a length")
+			} else {
+				column.FixLength = true
+			}
 		}
 	}
 
 	if baseType == "" {
-		return types.AntlrColumn{}, errors.New("unknown data type")
+		return nil, errors.New("unknown data type")
 	}
-	if simpleDatType.Type == "" {
-		return types.AntlrColumn{}, fmt.Errorf("unknown data type: %s", baseType)
+	if column.Type == "" {
+		return nil, fmt.Errorf("unknown data type: %s", baseType)
 	}
 
-	return simpleDatType, nil
+	return column, nil
 }

@@ -134,7 +134,7 @@ func (v *PgVisitor) VisitColid(ctx *parser.ColidContext) interface{} {
 
 func (v *PgVisitor) VisitTypename(ctx *parser.TypenameContext) interface{} {
 	fullname := strings.ToLower(ctx.GetText())
-	col, err := parseDataType(fullname)
+	col, err := v.parseColumnType(fullname)
 	if err != nil {
 		v.Err = err
 		return nil
@@ -161,7 +161,7 @@ func (v *PgVisitor) VisitCommentstmt(ctx *parser.CommentstmtContext) interface{}
 	return nil
 }
 
-func parseDataType(dataTypeStr string) (*types.AntlrColumn, error) {
+func (v *PgVisitor) parseColumnType(dataTypeStr string) (*types.AntlrColumn, error) {
 	// 定义正则表达式
 	re := regexp.MustCompile(`(?P<Type>\w+)(?:\((?P<Length>\d+)(?:,\s*(?P<Scale>\d+))?\))?`)
 
@@ -172,30 +172,38 @@ func parseDataType(dataTypeStr string) (*types.AntlrColumn, error) {
 	}
 
 	// Extract and map type
-	originalType := match[1]
+	originalType := strings.ToLower(match[1])
 	simplifiedType, exists := types.PgTypeMap[originalType]
 	if !exists {
 		return nil, fmt.Errorf("unsupported data type: %s", originalType)
 	}
 
 	// 提取匹配结果
-	result := &types.AntlrColumn{Type: simplifiedType}
+	column := &types.AntlrColumn{Type: simplifiedType}
 	if match[2] != "" {
 		length, err := strconv.Atoi(match[2])
 		if err != nil {
 			return nil, err
 		}
-		result.Length = length
+		column.Length = length
 	}
 	if match[3] != "" {
 		scale, err := strconv.Atoi(match[3])
 		if err != nil {
 			return nil, err
 		}
-		result.Scale = scale
+		column.Scale = scale
 	}
 
-	return result, nil
+	if originalType == "char" {
+		if column.Length == 0 {
+			return nil, errors.New("char type must have a length")
+		} else {
+			column.FixLength = true
+		}
+	}
+
+	return column, nil
 }
 
 func parsePgColumnComment(sql string) (*types.AntlrColumn, error) {

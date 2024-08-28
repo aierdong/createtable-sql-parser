@@ -126,7 +126,7 @@ func (v *OracleVisitor) VisitColumn_definition(ctx *parser.Column_definitionCont
 		return nil
 	}
 
-	ret, err := v.parseDataType(ctx.Datatype().GetText())
+	ret, err := v.parseColumnType(ctx.Datatype().GetText())
 	if err != nil {
 		v.Err = err
 		return nil
@@ -160,7 +160,7 @@ func (v *OracleVisitor) VisitComment_on_table(ctx *parser.Comment_on_tableContex
 	return nil
 }
 
-func (v *OracleVisitor) parseDataType(typeStr string) (*types.AntlrColumn, error) {
+func (v *OracleVisitor) parseColumnType(typeStr string) (*types.AntlrColumn, error) {
 	re := regexp.MustCompile(`(?i)^(\w+)(?:\((\d+)(?:,(\d+))?\))?$`)
 	matches := re.FindStringSubmatch(typeStr)
 	if matches == nil {
@@ -173,19 +173,27 @@ func (v *OracleVisitor) parseDataType(typeStr string) (*types.AntlrColumn, error
 		return nil, fmt.Errorf("unsupported data type: %s", originalType)
 	}
 
-	parsedType := &types.AntlrColumn{Type: simplifiedType}
+	column := &types.AntlrColumn{Type: simplifiedType}
 	if matches[2] != "" {
-		if _, err := fmt.Sscanf(matches[2], "%d", &parsedType.Length); err != nil {
+		if _, err := fmt.Sscanf(matches[2], "%d", &column.Length); err != nil {
 			return nil, fmt.Errorf("invalid type length: %s", matches[2])
 		}
 	}
 	if matches[3] != "" {
-		if _, err := fmt.Sscanf(matches[3], "%d", &parsedType.Scale); err != nil {
+		if _, err := fmt.Sscanf(matches[3], "%d", &column.Scale); err != nil {
 			return nil, fmt.Errorf("invalid type scale: %s", matches[3])
 		}
 	}
 
-	return parsedType, nil
+	if originalType == "CHAR" || originalType == "NCHAR" {
+		if column.Length == 0 {
+			return nil, errors.New("char type must have a length")
+		} else {
+			column.FixLength = true
+		}
+	}
+
+	return column, nil
 }
 
 func parseOracleColumnComment(sql string) (*types.AntlrColumn, error) {
