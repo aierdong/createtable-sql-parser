@@ -6,6 +6,7 @@ import (
 	parser "github.com/aierdong/createtable-sql-parser/parser/hive"
 	"github.com/aierdong/createtable-sql-parser/types"
 	"github.com/antlr4-go/antlr/v4"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -65,14 +66,9 @@ func (v *HiveVisitor) VisitCreateTableStatement(ctx *parser.CreateTableStatement
 			v.Err = err
 			return nil
 		}
+		column.Name = strings.Trim(colDef.Id_().GetText(), "`")
 
-		v.Table.Columns = append(v.Table.Columns, &types.AntlrColumn{
-			Name:    strings.Trim(colDef.Id_().GetText(), "`"),
-			Type:    column.Type,
-			Length:  column.Length,
-			Scale:   column.Scale,
-			Comment: column.Comment,
-		})
+		v.Table.Columns = append(v.Table.Columns, column)
 	}
 	return nil
 }
@@ -87,49 +83,74 @@ func (v *HiveVisitor) resolveTableName(tableName string) (database string, table
 	return database, table
 }
 
+// parseColumnType parses the column type definition and returns an AntlrColumn.
 func (v *HiveVisitor) parseColumnType(dataType string) (column *types.AntlrColumn, err error) {
-	baseType := ""
-
-	// Regular expressions to match different data types and their lengths/scales
-	re := regexp.MustCompile(`(?i)(\w+)(?:\((\d+)(?:,(\d+))?\))?`)
-	matches := re.FindStringSubmatch(dataType)
+	originalType, length, scale, err := v.extractColumnTypeInfo(dataType)
+	if err != nil {
+		return nil, err
+	}
 
 	column = &types.AntlrColumn{}
-	if len(matches) > 0 {
-		baseType = strings.ToLower(matches[1])
-		if simplifiedType, exists := types.HiveTypeMap[baseType]; exists {
-			column.Type = simplifiedType
-		} else {
-			column.Type = ""
-		}
-
-		if len(matches) > 2 && matches[2] != "" {
-			column.Length, _ = strconv.Atoi(matches[2])
-		}
-		if len(matches) > 3 && matches[3] != "" {
-			column.Scale, _ = strconv.Atoi(matches[3])
-		}
-
-		if column.Type == "numeric" && column.Scale == 0 {
-			column.Length = 2
-			column.Scale = 2
-		}
-
-		if baseType == "char" {
-			if column.Length == 0 {
-				return nil, errors.New("char type must have a length")
-			} else {
-				column.FixLength = true
-			}
-		}
+	column.DataType, err = v.mapColumnType(originalType)
+	if err != nil {
+		return nil, err
 	}
 
-	if baseType == "" {
-		return nil, errors.New("unknown data type")
-	}
-	if column.Type == "" {
-		return nil, fmt.Errorf("unknown data type: %s", baseType)
-	}
-
+	v.setColumnAttributes(column, originalType, length, scale)
 	return column, nil
+}
+
+// extractColumnTypeInfo extracts the column type information using regular expressions.
+func (v *HiveVisitor) extractColumnTypeInfo(dataType string) (originalType string, length int, scale int, err error) {
+	re := regexp.MustCompile(`(?i)(\w+)(?:\((\d+)(?:,(\d+))?\))?`)
+	matches := re.FindStringSubmatch(dataType)
+	if len(matches) == 0 {
+		return "", 0, 0, errors.New("unknown column define: " + dataType)
+	}
+
+	originalType = strings.ToLower(matches[1])
+	if len(matches) > 2 && matches[2] != "" {
+		length, _ = strconv.Atoi(matches[2])
+	}
+	if len(matches) > 3 && matches[3] != "" {
+		scale, _ = strconv.Atoi(matches[3])
+	}
+	return originalType, length, scale, nil
+}
+
+// mapColumnType maps the original type to a simplified type.
+func (v *HiveVisitor) mapColumnType(originalType string) (string, error) {
+	if simplifiedType, exists := types.HiveTypeMap[originalType]; exists {
+		return simplifiedType, nil
+	}
+	return "", fmt.Errorf("unknown integer type: %s", originalType)
+}
+
+// setColumnAttributes sets the attributes of the column based on its type.
+func (v *HiveVisitor) setColumnAttributes(column *types.AntlrColumn, originalType string, length int, scale int) {
+	switch originalType {
+	case "char", "varchar", "string":
+		column.StringLength = If(length > 0, length, 60)
+	case "tinyint":
+		column.MaxInteger = math.MaxInt8
+	case "smallint":
+		column.MaxInteger = math.MaxInt16
+	case "int", "integer":
+		column.MaxInteger = math.MaxInt32
+	case "bigint":
+		column.MaxInteger = math.MaxInt64
+	case "float":
+		column.MaxFloat = getMaxFloat32(length)
+		column.Scale = If(scale > 0, scale, 2)
+	case "double", "decimal":
+		column.MaxFloat = getMaxFloat64(length)
+		column.Scale = If(scale > 0, scale, 2)
+	}
+}
+
+func If[T any](express bool, a, b T) T {
+	if express {
+		return a
+	}
+	return b
 }

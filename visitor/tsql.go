@@ -7,6 +7,7 @@ import (
 	"github.com/aierdong/createtable-sql-parser/types"
 	"github.com/antlr4-go/antlr/v4"
 	"log"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -116,14 +117,41 @@ func (v *MssqlVisitor) VisitColumn_definition(ctx *parser.Column_definitionConte
 
 	col := ret.(*types.AntlrColumn)
 	return &types.AntlrColumn{
-		Name:   strings.Trim(ctx.Id_().GetText(), "[]"),
-		Type:   col.Type,
-		Length: col.Length,
-		Scale:  col.Scale,
+		Name:         strings.Trim(ctx.Id_().GetText(), "[]"),
+		DataType:     col.DataType,
+		StringLength: col.StringLength,
+		Scale:        col.Scale,
 	}
 }
 
+// VisitData_type processes the data type context and returns an AntlrColumn.
 func (v *MssqlVisitor) VisitData_type(ctx *parser.Data_typeContext) interface{} {
+	originalType, err := v.extractOriginalType(ctx)
+	if err != nil {
+		v.Err = err
+		return nil
+	}
+
+	simplifiedType, err := v.mapSimplifiedType(originalType)
+	if err != nil {
+		v.Err = err
+		return nil
+	}
+
+	col := &types.AntlrColumn{DataType: simplifiedType}
+
+	length, scale, err := v.extractLengthAndScale(ctx, originalType)
+	if err != nil {
+		v.Err = err
+		return nil
+	}
+
+	v.setColumnAttributes(col, originalType, length, scale)
+	return col
+}
+
+// extractOriginalType extracts the original type from the context.
+func (v *MssqlVisitor) extractOriginalType(ctx *parser.Data_typeContext) (string, error) {
 	var originalType string
 	if ctx.Id_() != nil {
 		originalType = strings.ToLower(ctx.Id_().GetText())
@@ -133,47 +161,64 @@ func (v *MssqlVisitor) VisitData_type(ctx *parser.Data_typeContext) interface{} 
 	}
 
 	if originalType == "" {
-		v.Err = errors.New("data type is empty")
-		return nil
+		return "", errors.New("data type is empty")
 	}
+	return originalType, nil
+}
 
+// mapSimplifiedType maps the original type to a simplified type.
+func (v *MssqlVisitor) mapSimplifiedType(originalType string) (string, error) {
 	simplifiedType, exists := types.TSqlTypeMap[originalType]
 	if !exists {
-		v.Err = fmt.Errorf("unsupported data type: %s", originalType)
-		return nil
+		return "", fmt.Errorf("unsupported data type: %s", originalType)
 	}
+	return simplifiedType, nil
+}
 
-	col := &types.AntlrColumn{
-		Type: simplifiedType,
+// extractLengthAndScale extracts the length and scale from the context.
+func (v *MssqlVisitor) extractLengthAndScale(ctx *parser.Data_typeContext, originalType string) (int, int, error) {
+	length, scale := 0, 0
+	var err error
+	if ctx.AllDECIMAL() != nil && len(ctx.AllDECIMAL()) > 0 {
+		if length, err = strconv.Atoi(ctx.DECIMAL(0).GetText()); err != nil {
+			return 0, 0, fmt.Errorf("invalid length for %s", originalType)
+		}
 	}
+	if ctx.AllDECIMAL() != nil && len(ctx.AllDECIMAL()) > 1 {
+		if scale, err = strconv.Atoi(ctx.DECIMAL(1).GetText()); err != nil {
+			return 0, 0, fmt.Errorf("invalid scale for %s", originalType)
+		}
+	}
+	return length, scale, nil
+}
 
+// setColumnAttributes sets the column attributes based on the original type, length, and scale.
+func (v *MssqlVisitor) setColumnAttributes(col *types.AntlrColumn, originalType string, length, scale int) {
 	switch originalType {
-	case "money", "smallmoney", "float", "real":
-		col.Scale = 4
 	case "bit":
-		col.Length = 1
-	default:
-		if len(ctx.AllDECIMAL()) > 0 {
-			if length, err := strconv.Atoi(ctx.DECIMAL(0).GetText()); err == nil {
-				col.Length = length
-			}
-		}
-		if len(ctx.AllDECIMAL()) > 1 {
-			if scale, err := strconv.Atoi(ctx.DECIMAL(1).GetText()); err == nil {
-				col.Scale = scale
-			}
-		}
-		if originalType == "char" || originalType == "nchar" {
-			if col.Length == 0 {
-				v.Err = errors.New("char type must have a length")
-				return nil
-			} else {
-				col.FixLength = true
-			}
-		}
+		col.MaxInteger = 1
+		col.MinInteger = 0
+	case "tinyint":
+		col.MaxInteger = math.MaxInt8
+	case "smallint":
+		col.MaxInteger = math.MaxInt16
+	case "int":
+		col.MaxInteger = math.MaxInt32
+	case "bigint":
+		col.MaxInteger = math.MaxInt64
+	case "decimal", "numeric":
+		col.MaxFloat = getMaxFloat64(length)
+		col.Scale = scale
+	case "float", "real":
+		col.MaxFloat = getMaxFloat32(length)
+		col.Scale = scale
+	case "money":
+		col.MaxFloat = 922337203685477.5807
+	case "smallmoney":
+		col.MaxFloat = 214748.3647
+	case "char", "varchar", "text", "nchar", "nvarchar", "ntext":
+		col.StringLength = If(length > 0, length, 60)
 	}
-
-	return col
 }
 
 func (v *MssqlVisitor) VisitExecute_statement(ctx *parser.Execute_statementContext) interface{} {

@@ -6,6 +6,7 @@ import (
 	parser "github.com/aierdong/createtable-sql-parser/parser/pg"
 	"github.com/aierdong/createtable-sql-parser/types"
 	"github.com/antlr4-go/antlr/v4"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -116,8 +117,8 @@ func (v *PgVisitor) VisitColumnDef(ctx *parser.ColumnDefContext) interface{} {
 		}
 		if ele, ok := child.(*parser.TypenameContext); ok {
 			if t := ele.Accept(v); t != nil {
-				col.Type = t.(*types.AntlrColumn).Type
-				col.Length = t.(*types.AntlrColumn).Length
+				col.DataType = t.(*types.AntlrColumn).DataType
+				col.StringLength = t.(*types.AntlrColumn).StringLength
 				col.Scale = t.(*types.AntlrColumn).Scale
 			}
 			continue
@@ -161,48 +162,79 @@ func (v *PgVisitor) VisitCommentstmt(ctx *parser.CommentstmtContext) interface{}
 	return nil
 }
 
-func (v *PgVisitor) parseColumnType(dataTypeStr string) (*types.AntlrColumn, error) {
-	// 定义正则表达式
-	re := regexp.MustCompile(`(?P<Type>\w+)(?:\((?P<Length>\d+)(?:,\s*(?P<Scale>\d+))?\))?`)
-
-	// 匹配字符串
-	match := re.FindStringSubmatch(dataTypeStr)
-	if match == nil {
-		return nil, fmt.Errorf("invalid data type format: %s", dataTypeStr)
+// extractColumnTypeInfo extracts the column type information using regular expressions.
+func (v *PgVisitor) extractColumnTypeInfo(dataType string) (originalType string, length int, scale int, err error) {
+	re := regexp.MustCompile(`(?P<DataType>\w+)(?:\((?P<StringLength>\d+)(?:,\s*(?P<Scale>\d+))?\))?`)
+	matches := re.FindStringSubmatch(dataType)
+	if matches == nil || len(matches) < 2 {
+		return "", 0, 0, fmt.Errorf("invalid data type format: %s", dataType)
 	}
 
-	// Extract and map type
-	originalType := strings.ToLower(match[1])
+	originalType = strings.ToLower(matches[1])
+	if len(matches) >= 3 && matches[2] != "" {
+		length, err = strconv.Atoi(matches[2])
+		if err != nil {
+			return "", 0, 0, err
+		}
+	}
+	if len(matches) >= 4 && matches[3] != "" {
+		scale, err = strconv.Atoi(matches[3])
+		if err != nil {
+			return "", 0, 0, err
+		}
+	}
+	return originalType, length, scale, nil
+}
+
+// mapColumnType maps the original type to a simplified type.
+func (v *PgVisitor) mapColumnType(originalType string) (string, error) {
 	simplifiedType, exists := types.PgTypeMap[originalType]
 	if !exists {
-		return nil, fmt.Errorf("unsupported data type: %s", originalType)
+		return "", fmt.Errorf("unsupported data type: %s", originalType)
+	}
+	return simplifiedType, nil
+}
+
+// setColumnAttributes sets the attributes of the column based on its type.
+func (v *PgVisitor) setColumnAttributes(column *types.AntlrColumn, originalType string, length int, scale int) {
+	switch originalType {
+	case "int2", "smallint":
+		column.MaxInteger = math.MaxInt16
+	case "int4", "integer":
+		column.MaxInteger = math.MaxInt32
+	case "int8", "bigint":
+		column.MaxInteger = math.MaxInt64
+	case "serial":
+		column.MaxInteger = math.MaxInt32
+		column.AutoIncrement = true
+	case "bigserial":
+		column.MaxInteger = math.MaxInt64
+		column.AutoIncrement = true
+	case "varchar", "char", "text":
+		column.StringLength = If(length > 0, length, 60)
+	case "numeric", "decimal", "double":
+		column.MaxFloat = getMaxFloat64(length)
+		column.Scale = If(scale > 0, scale, 2)
+	case "real":
+		column.MaxFloat = getMaxFloat32(length)
+		column.Scale = If(scale > 0, scale, 2)
+	}
+}
+
+// parseColumnType parses the column type definition and returns an AntlrColumn.
+func (v *PgVisitor) parseColumnType(dataType string) (*types.AntlrColumn, error) {
+	originalType, length, scale, err := v.extractColumnTypeInfo(dataType)
+	if err != nil {
+		return nil, err
 	}
 
-	// 提取匹配结果
-	column := &types.AntlrColumn{Type: simplifiedType}
-	if match[2] != "" {
-		length, err := strconv.Atoi(match[2])
-		if err != nil {
-			return nil, err
-		}
-		column.Length = length
-	}
-	if match[3] != "" {
-		scale, err := strconv.Atoi(match[3])
-		if err != nil {
-			return nil, err
-		}
-		column.Scale = scale
+	simplifiedType, err := v.mapColumnType(originalType)
+	if err != nil {
+		return nil, err
 	}
 
-	if originalType == "char" {
-		if column.Length == 0 {
-			return nil, errors.New("char type must have a length")
-		} else {
-			column.FixLength = true
-		}
-	}
-
+	column := &types.AntlrColumn{DataType: simplifiedType}
+	v.setColumnAttributes(column, originalType, length, scale)
 	return column, nil
 }
 
@@ -255,4 +287,48 @@ func parsePgTable(sql string) (*types.AntlrTable, error) {
 	}
 	tree.Accept(visitor)
 	return visitor.Table, visitor.Err
+}
+
+func getMaxFloat64(length int) float64 {
+	if length == 0 {
+		length = 18
+	}
+	maxFloat := math.Pow(10, float64(length)) - 1
+	if math.IsInf(maxFloat, 0) {
+		return math.MaxFloat64
+	}
+	return maxFloat
+}
+
+func getMaxFloat32(length int) float64 {
+	if length == 0 {
+		length = 10
+	}
+	maxFloat := math.Pow(10, float64(length)) - 1
+	if math.IsInf(maxFloat, 0) || maxFloat > math.MaxFloat32 {
+		return math.MaxFloat32
+	}
+	return maxFloat
+}
+
+func getMaxInt64(length int) int64 {
+	if length == 0 {
+		length = 19
+	}
+	maxInt := math.Pow(10, float64(length)) - 1
+	if maxInt > float64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(maxInt)
+}
+
+func getMaxInt32(length int) int64 {
+	if length == 0 {
+		length = 10
+	}
+	maxInt := math.Pow(10, float64(length)) - 1
+	if maxInt > float64(math.MaxInt32) {
+		return math.MaxInt32
+	}
+	return int64(maxInt)
 }

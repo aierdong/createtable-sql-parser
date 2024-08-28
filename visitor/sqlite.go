@@ -70,14 +70,15 @@ func (v *SqliteVisitor) VisitCreate_table_stmt(ctx *parser.Create_table_stmtCont
 		}
 		scale := 0
 		if simplifiedType == "decimal" {
+			length = 31
 			scale = 2
 		}
 
 		v.Table.Columns = append(v.Table.Columns, &types.AntlrColumn{
-			Name:   strings.Trim(col.Column_name().GetText(), "`\"[]"),
-			Type:   simplifiedType,
-			Length: length,
-			Scale:  scale,
+			Name:         strings.Trim(col.Column_name().GetText(), "`\"[]"),
+			DataType:     simplifiedType,
+			StringLength: length,
+			Scale:        scale,
 		})
 	}
 

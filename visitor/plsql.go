@@ -6,6 +6,7 @@ import (
 	parser "github.com/aierdong/createtable-sql-parser/parser/plsql"
 	"github.com/aierdong/createtable-sql-parser/types"
 	"github.com/antlr4-go/antlr/v4"
+	"math"
 	"regexp"
 	"strings"
 )
@@ -133,10 +134,10 @@ func (v *OracleVisitor) VisitColumn_definition(ctx *parser.Column_definitionCont
 	}
 
 	return &types.AntlrColumn{
-		Name:   strings.Trim(ctx.Column_name().GetText(), "\""),
-		Type:   ret.Type,
-		Length: ret.Length,
-		Scale:  ret.Scale,
+		Name:         strings.Trim(ctx.Column_name().GetText(), "\""),
+		DataType:     ret.DataType,
+		StringLength: ret.StringLength,
+		Scale:        ret.Scale,
 	}
 }
 
@@ -160,40 +161,85 @@ func (v *OracleVisitor) VisitComment_on_table(ctx *parser.Comment_on_tableContex
 	return nil
 }
 
+// parseColumnType parses the column type definition and returns an AntlrColumn.
 func (v *OracleVisitor) parseColumnType(typeStr string) (*types.AntlrColumn, error) {
+	originalType, length, scale, err := v.parseTypeString(typeStr)
+	if err != nil {
+		return nil, err
+	}
+
+	column, err := v.mapColumnType(originalType)
+	if err != nil {
+		return nil, err
+	}
+
+	v.setColumnAttributes(column, originalType, length, scale)
+	return column, nil
+}
+
+// parseTypeString parses the type string and extracts the type, length, and scale.
+func (v *OracleVisitor) parseTypeString(typeStr string) (string, int, int, error) {
 	re := regexp.MustCompile(`(?i)^(\w+)(?:\((\d+)(?:,(\d+))?\))?$`)
 	matches := re.FindStringSubmatch(typeStr)
 	if matches == nil {
-		return nil, fmt.Errorf("invalid type format: %s", typeStr)
+		return "", 0, 0, fmt.Errorf("invalid type format: %s", typeStr)
 	}
 
 	originalType := strings.ToUpper(matches[1])
+	length, scale := 0, 0
+	if len(matches) >= 3 && matches[2] != "" {
+		if _, err := fmt.Sscanf(matches[2], "%d", &length); err != nil {
+			return "", 0, 0, fmt.Errorf("invalid type length: %s", matches[2])
+		}
+	}
+	if len(matches) >= 4 && matches[3] != "" {
+		if _, err := fmt.Sscanf(matches[3], "%d", &scale); err != nil {
+			return "", 0, 0, fmt.Errorf("invalid type scale: %s", matches[3])
+		}
+	}
+
+	return originalType, length, scale, nil
+}
+
+// mapColumnType maps the original type to a simplified type and initializes the column.
+func (v *OracleVisitor) mapColumnType(originalType string) (*types.AntlrColumn, error) {
 	simplifiedType, exists := types.PLSqlTypeMap[originalType]
 	if !exists {
 		return nil, fmt.Errorf("unsupported data type: %s", originalType)
 	}
 
-	column := &types.AntlrColumn{Type: simplifiedType}
-	if matches[2] != "" {
-		if _, err := fmt.Sscanf(matches[2], "%d", &column.Length); err != nil {
-			return nil, fmt.Errorf("invalid type length: %s", matches[2])
-		}
-	}
-	if matches[3] != "" {
-		if _, err := fmt.Sscanf(matches[3], "%d", &column.Scale); err != nil {
-			return nil, fmt.Errorf("invalid type scale: %s", matches[3])
-		}
-	}
+	return &types.AntlrColumn{DataType: simplifiedType}, nil
+}
 
-	if originalType == "CHAR" || originalType == "NCHAR" {
-		if column.Length == 0 {
-			return nil, errors.New("char type must have a length")
+// setColumnAttributes sets the column attributes based on the original type, length, and scale.
+func (v *OracleVisitor) setColumnAttributes(column *types.AntlrColumn, originalType string, length, scale int) {
+	switch originalType {
+	case "BINARY_INTEGER", "PLS_INTEGER", "NATURAL", "NATURALN", "POSITIVE",
+		"POSITIVEN", "INT", "INTEGER", "SMALLINT":
+		column.MaxInteger = math.MaxInt32
+	case "SIGNTYPE":
+		column.MaxInteger = 1
+		column.MinInteger = -1
+	case "BINARY_FLOAT", "REAL":
+		if scale == 0 {
+			column.DataType = "integer"
+			column.MaxInteger = getMaxInt32(length)
 		} else {
-			column.FixLength = true
+			column.MaxFloat = getMaxFloat32(length)
+			column.Scale = scale
 		}
+	case "BINARY_DOUBLE", "FLOAT", "DOUBLE", "DOUBLE PRECISION", "DEC",
+		"NUMBER", "NUMERIC", "DECIMAL":
+		if scale == 0 {
+			column.DataType = "integer"
+			column.MaxInteger = getMaxInt64(length)
+		} else {
+			column.MaxFloat = getMaxFloat64(length)
+			column.Scale = scale
+		}
+	case "CHAR", "NCHAR", "VARCAHR", "VARCHAR2", "NVARCHAR2", "CHARACTER", "STRING":
+		column.StringLength = length
 	}
-
-	return column, nil
 }
 
 func parseOracleColumnComment(sql string) (*types.AntlrColumn, error) {

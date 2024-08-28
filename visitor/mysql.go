@@ -6,6 +6,7 @@ import (
 	parser "github.com/aierdong/createtable-sql-parser/parser/mysql"
 	"github.com/aierdong/createtable-sql-parser/types"
 	"github.com/antlr4-go/antlr/v4"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -97,8 +98,8 @@ func (v *MySQLVisitor) VisitTableElementList(ctx *parser.TableElementListContext
 
 		v.Table.Columns = append(v.Table.Columns, &types.AntlrColumn{
 			Name:          strings.Trim(colDef.ColumnName().GetText(), "`"),
-			Type:          column.Type,
-			Length:        column.Length,
+			DataType:      column.DataType,
+			StringLength:  column.StringLength,
 			Scale:         column.Scale,
 			Comment:       column.Comment,
 			AutoIncrement: column.AutoIncrement,
@@ -130,49 +131,64 @@ func (v *MySQLVisitor) VisitCreateTableOptions(ctx *parser.CreateTableOptionsCon
 }
 
 func (v *MySQLVisitor) parseColumnType(dataType string) (column *types.AntlrColumn, err error) {
-	baseType := ""
-
-	// Regular expressions to match different data types and their lengths/scales
-	re := regexp.MustCompile(`(?i)(\w+)(?:\((\d+)(?:,(\d+))?\))?`)
-	matches := re.FindStringSubmatch(dataType)
+	originalType, length, scale, err := v.extractColumnTypeInfo(dataType)
+	if err != nil {
+		return nil, err
+	}
 
 	column = &types.AntlrColumn{}
-
-	if len(matches) > 0 {
-		baseType = strings.ToLower(matches[1])
-		if simplifiedType, exists := types.MySQLTypeMap[baseType]; exists {
-			column.Type = simplifiedType
-		} else {
-			column.Type = ""
-		}
-
-		if len(matches) > 2 && matches[2] != "" {
-			column.Length, _ = strconv.Atoi(matches[2])
-		}
-		if len(matches) > 3 && matches[3] != "" {
-			column.Scale, _ = strconv.Atoi(matches[3])
-		}
-
-		if column.Type == "numeric" && column.Scale == 0 {
-			column.Length = 2
-			column.Scale = 2
-		}
-
-		if baseType == "char" {
-			if column.Length == 0 {
-				return nil, errors.New("char type must have a length")
-			} else {
-				column.FixLength = true
-			}
-		}
+	column.DataType, err = v.mapColumnType(originalType)
+	if err != nil {
+		return nil, err
 	}
 
-	if baseType == "" {
-		return nil, errors.New("unknown data type")
-	}
-	if column.Type == "" {
-		return nil, fmt.Errorf("unknown data type: %s", baseType)
-	}
-
+	v.setColumnAttributes(column, originalType, length, scale)
 	return column, nil
+}
+
+func (v *MySQLVisitor) extractColumnTypeInfo(dataType string) (originalType string, length int, scale int, err error) {
+	re := regexp.MustCompile(`(?i)(\w+)(?:\((\d+)(?:,(\d+))?\))?`)
+	matches := re.FindStringSubmatch(dataType)
+	if len(matches) == 0 {
+		return "", 0, 0, errors.New("unknown column define: " + dataType)
+	}
+
+	originalType = strings.ToLower(matches[1])
+	if len(matches) > 2 && matches[2] != "" {
+		length, _ = strconv.Atoi(matches[2])
+	}
+	if len(matches) > 3 && matches[3] != "" {
+		scale, _ = strconv.Atoi(matches[3])
+	}
+	return originalType, length, scale, nil
+}
+
+func (v *MySQLVisitor) mapColumnType(originalType string) (string, error) {
+	if simplifiedType, exists := types.MySQLTypeMap[originalType]; exists {
+		return simplifiedType, nil
+	}
+	return "", fmt.Errorf("unknown integer type: %s", originalType)
+}
+
+func (v *MySQLVisitor) setColumnAttributes(column *types.AntlrColumn, originalType string, length int, scale int) {
+	switch originalType {
+	case "char", "varchar", "string", "text", "tinytext", "mediumtext", "longtext":
+		column.StringLength = If(length > 0, length, 60)
+	case "tinyint":
+		column.MaxInteger = math.MaxInt8
+	case "smallint":
+		column.MaxInteger = math.MaxInt16
+	case "mediumint":
+		column.MaxInteger = 1<<23 - 1 // 8388607
+	case "int", "integer":
+		column.MaxInteger = math.MaxInt32
+	case "bigint":
+		column.MaxInteger = math.MaxInt64
+	case "float", "real":
+		column.MaxFloat = getMaxFloat32(length)
+		column.Scale = If(scale > 0, scale, 2)
+	case "double", "decimal", "numeric":
+		column.MaxFloat = getMaxFloat64(length)
+		column.Scale = If(scale > 0, scale, 2)
+	}
 }
