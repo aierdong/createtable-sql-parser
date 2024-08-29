@@ -18,7 +18,14 @@ type MySQLVisitor struct {
 	Err   error
 }
 
-func ParseMySql(sql string) (*types.AntlrTable, error) {
+func ParseMySql(sql string) (table *types.AntlrTable, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			table = nil
+			err = errors.New(fmt.Sprint("parse sql error: ", r))
+		}
+	}()
+
 	lexer := parser.NewMySQLLexer(antlr.NewInputStream(sql))
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 
@@ -55,14 +62,22 @@ func (v *MySQLVisitor) VisitCreateTable(ctx *parser.CreateTableContext) interfac
 		v.Err = fmt.Errorf("table name is nil")
 		return nil
 	}
+
 	arr := strings.Split(ctx.TableName().GetText(), ".")
 	if len(arr) == 2 {
 		v.Table.Database = strings.Trim(arr[0], "`")
 	}
 	v.Table.Name = strings.Trim(arr[len(arr)-1], "`")
 
+	if ctx.TableElementList() == nil {
+		v.Err = fmt.Errorf("table element list is nil")
+		return nil
+	}
 	ctx.TableElementList().Accept(v)
-	ctx.CreateTableOptions().Accept(v)
+
+	if ctx.CreateTableOptions() != nil {
+		ctx.CreateTableOptions().Accept(v)
+	}
 
 	return nil
 }
@@ -174,7 +189,7 @@ func (v *MySQLVisitor) mapColumnType(originalType string) (string, error) {
 func (v *MySQLVisitor) setColumnAttributes(column *types.AntlrColumn, originalType string, length int, scale int) {
 	switch originalType {
 	case "char", "varchar", "string", "text", "tinytext", "mediumtext", "longtext":
-		column.StringLength = If(length > 0, length, 60)
+		column.StringLength = If(length > 0 && length < 50, length, 50)
 	case "tinyint":
 		column.MaxInteger = math.MaxInt8
 	case "smallint":

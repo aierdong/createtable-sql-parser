@@ -16,7 +16,14 @@ type SqliteVisitor struct {
 	Err    error
 }
 
-func ParseSqliteSql(sql string) (*types.AntlrTable, error) {
+func ParseSqliteSql(sql string) (table *types.AntlrTable, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			table = nil
+			err = errors.New(fmt.Sprint("parse sql error: ", r))
+		}
+	}()
+
 	lexer := parser.NewSQLiteLexer(antlr.NewInputStream(sql))
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 
@@ -69,7 +76,7 @@ func (v *SqliteVisitor) VisitCreate_table_stmt(ctx *parser.Create_table_stmtCont
 
 		length := 0
 		if simplifiedType == "string" {
-			length = 60
+			length = 50
 		}
 		scale := 0
 		if simplifiedType == "decimal" {

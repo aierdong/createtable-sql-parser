@@ -19,13 +19,18 @@ type PgVisitor struct {
 	Err    error
 }
 
-func ParsePgSql(sql string) (*types.AntlrTable, error) {
+func ParsePgSql(sql string) (table *types.AntlrTable, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			table = nil
+			err = errors.New(fmt.Sprint("parse sql error: ", r))
+		}
+	}()
+
 	sqls := strings.Split(sql, ";")
-	var table *types.AntlrTable
 
 	for _, s := range sqls {
 		if len(s) > 12 && strings.ToUpper(s[:12]) == "CREATE TABLE" {
-			var err error
 			table, err = parsePgTable(s)
 			if err != nil {
 				return nil, err
@@ -112,14 +117,16 @@ func (v *PgVisitor) VisitColumnDef(ctx *parser.ColumnDefContext) interface{} {
 	col := &types.AntlrColumn{}
 	for _, child := range ctx.GetChildren() {
 		if ele, ok := child.(*parser.ColidContext); ok {
-			col.Name = ele.Accept(v).(string)
+			col.Name = strings.Trim(ele.GetText(), "\"")
 			continue
 		}
 		if ele, ok := child.(*parser.TypenameContext); ok {
 			if t := ele.Accept(v); t != nil {
-				col.DataType = t.(*types.AntlrColumn).DataType
-				col.StringLength = t.(*types.AntlrColumn).StringLength
-				col.Scale = t.(*types.AntlrColumn).Scale
+				tc := t.(*types.AntlrColumn)
+				col.DataType = tc.DataType
+				col.StringLength = tc.StringLength
+				col.Scale = tc.Scale
+				col.AutoIncrement = tc.AutoIncrement
 			}
 			continue
 		}
@@ -211,7 +218,7 @@ func (v *PgVisitor) setColumnAttributes(column *types.AntlrColumn, originalType 
 		column.MaxInteger = math.MaxInt64
 		column.AutoIncrement = true
 	case "varchar", "char", "text":
-		column.StringLength = If(length > 0, length, 60)
+		column.StringLength = If(length > 0 && length < 50, length, 50)
 	case "numeric", "decimal", "double":
 		column.MaxFloat = getMaxFloat64(length)
 		column.Scale = If(scale > 0, scale, 2)

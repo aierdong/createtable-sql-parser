@@ -18,7 +18,14 @@ type HiveVisitor struct {
 	Err   error
 }
 
-func ParseHiveSql(sql string) (*types.AntlrTable, error) {
+func ParseHiveSql(sql string) (table *types.AntlrTable, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			table = nil
+			err = errors.New(fmt.Sprint("parse sql error: ", r))
+		}
+	}()
+
 	lexer := parser.NewHiveLexer(antlr.NewInputStream(sql))
 	stream := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 
@@ -131,7 +138,7 @@ func (v *HiveVisitor) mapColumnType(originalType string) (string, error) {
 func (v *HiveVisitor) setColumnAttributes(column *types.AntlrColumn, originalType string, length int, scale int) {
 	switch originalType {
 	case "char", "varchar", "string":
-		column.StringLength = If(length > 0, length, 60)
+		column.StringLength = If(length > 0 && length < 50, length, 50)
 	case "tinyint":
 		column.MaxInteger = math.MaxInt8
 	case "smallint":

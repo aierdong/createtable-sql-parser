@@ -21,14 +21,19 @@ type OracleVisitor struct {
 	Err    error
 }
 
-func ParsePlSql(sql string) (*types.AntlrTable, error) {
+func ParsePlSql(sql string) (table *types.AntlrTable, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			table = nil
+			err = errors.New(fmt.Sprint("parse sql error: ", r))
+		}
+	}()
+
 	sqls := strings.Split(sql, ";")
-	var table *types.AntlrTable
 
 	for _, s := range sqls {
 		s += ";"
 		if len(s) > 12 && strings.ToUpper(s[:12]) == "CREATE TABLE" {
-			var err error
 			table, err = parseOracleTable(s)
 			if err != nil {
 				return nil, err
@@ -238,7 +243,7 @@ func (v *OracleVisitor) setColumnAttributes(column *types.AntlrColumn, originalT
 			column.Scale = scale
 		}
 	case "CHAR", "NCHAR", "VARCAHR", "VARCHAR2", "NVARCHAR2", "CHARACTER", "STRING":
-		column.StringLength = length
+		column.StringLength = If(length > 0 && length < 50, length, 50)
 	}
 }
 
