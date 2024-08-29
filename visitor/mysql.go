@@ -30,6 +30,7 @@ func ParseMySql(sql string) (*types.AntlrTable, error) {
 	visitor := &MySQLVisitor{
 		BaseMySQLParserVisitor: &parser.BaseMySQLParserVisitor{},
 		Table: &types.AntlrTable{
+			Dialect: types.MySQL,
 			Columns: make([]*types.AntlrColumn, 0),
 		},
 	}

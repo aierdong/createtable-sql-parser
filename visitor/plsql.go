@@ -283,6 +283,7 @@ func parseOracleTable(sql string) (*types.AntlrTable, error) {
 	visitor := &OracleVisitor{
 		BasePlSqlParserVisitor: &parser.BasePlSqlParserVisitor{},
 		Table: &types.AntlrTable{
+			Dialect: types.Oracle,
 			Columns: make([]*types.AntlrColumn, 0),
 		},
 	}

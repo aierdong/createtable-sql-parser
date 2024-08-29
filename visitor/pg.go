@@ -282,6 +282,7 @@ func parsePgTable(sql string) (*types.AntlrTable, error) {
 	visitor := &PgVisitor{
 		BasePostgreSQLParserVisitor: &parser.BasePostgreSQLParserVisitor{},
 		Table: &types.AntlrTable{
+			Dialect: types.PostgreSQL,
 			Columns: make([]*types.AntlrColumn, 0),
 		},
 	}

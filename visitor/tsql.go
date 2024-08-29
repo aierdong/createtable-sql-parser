@@ -321,6 +321,7 @@ func parseTSqlTable(sql string) (*types.AntlrTable, error) {
 	visitor := &MssqlVisitor{
 		BaseTSqlParserVisitor: &parser.BaseTSqlParserVisitor{},
 		Table: &types.AntlrTable{
+			Dialect: types.SQLServer,
 			Columns: make([]*types.AntlrColumn, 0),
 		},
 	}

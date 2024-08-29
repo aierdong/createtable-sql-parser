@@ -30,6 +30,7 @@ func ParseHiveSql(sql string) (*types.AntlrTable, error) {
 	visitor := &HiveVisitor{
 		BaseHiveParserVisitor: &parser.BaseHiveParserVisitor{},
 		Table: &types.AntlrTable{
+			Dialect: types.Hive,
 			Columns: make([]*types.AntlrColumn, 0),
 		},
 	}

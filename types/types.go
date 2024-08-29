@@ -13,6 +13,7 @@ type AntlrColumn struct {
 }
 
 type AntlrTable struct {
+	Dialect  Dialect
 	Database string
 	Name     string
 	Columns  []*AntlrColumn

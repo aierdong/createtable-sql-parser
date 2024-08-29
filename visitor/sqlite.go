@@ -27,7 +27,10 @@ func ParseSqliteSql(sql string) (*types.AntlrTable, error) {
 
 	visitor := &SqliteVisitor{
 		BaseSQLiteParserVisitor: &parser.BaseSQLiteParserVisitor{},
-		Table:                   &types.AntlrTable{},
+		Table: &types.AntlrTable{
+			Dialect: types.SQLite3,
+			Columns: make([]*types.AntlrColumn, 0),
+		},
 	}
 	tree.Accept(visitor)
 
@@ -49,7 +52,7 @@ func (v *SqliteVisitor) VisitCreate_table_stmt(ctx *parser.Create_table_stmtCont
 	}
 
 	v.Table.Name = strings.Trim(ctx.Table_name().GetText(), "`\"[]")
-	v.Table.Columns = make([]*types.AntlrColumn, 0)
+
 	for _, col := range ctx.AllColumn_def() {
 		if col.Column_name() == nil || col.Type_name() == nil {
 			v.Err = errors.New("column name or type name is nil")
