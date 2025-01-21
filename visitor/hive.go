@@ -131,7 +131,7 @@ func (v *HiveVisitor) mapColumnType(originalType string) (string, error) {
 	if simplifiedType, exists := types.HiveTypeMap[originalType]; exists {
 		return simplifiedType, nil
 	}
-	return "", fmt.Errorf("unknown integer type: %s", originalType)
+	return "", fmt.Errorf("unknown type: '%s'", originalType)
 }
 
 // setColumnAttributes sets the attributes of the column based on its type.

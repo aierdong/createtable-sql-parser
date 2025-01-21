@@ -70,7 +70,7 @@ func (v *SqliteVisitor) VisitCreate_table_stmt(ctx *parser.Create_table_stmtCont
 
 		simplifiedType, exists := types.SqliteTypeMap[originalType]
 		if !exists {
-			v.Err = fmt.Errorf("unsupported data type: %s", originalType)
+			v.Err = fmt.Errorf("unknown type: '%s'", originalType)
 			return nil
 		}
 

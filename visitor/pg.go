@@ -197,7 +197,7 @@ func (v *PgVisitor) extractColumnTypeInfo(dataType string) (originalType string,
 func (v *PgVisitor) mapColumnType(originalType string) (string, error) {
 	simplifiedType, exists := types.PgTypeMap[originalType]
 	if !exists {
-		return "", fmt.Errorf("unsupported data type: %s", originalType)
+		return "", fmt.Errorf("unknown type: '%s'", originalType)
 	}
 	return simplifiedType, nil
 }

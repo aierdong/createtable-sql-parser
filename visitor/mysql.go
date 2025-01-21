@@ -183,13 +183,16 @@ func (v *MySQLVisitor) mapColumnType(originalType string) (string, error) {
 	if simplifiedType, exists := types.MySQLTypeMap[originalType]; exists {
 		return simplifiedType, nil
 	}
-	return "", fmt.Errorf("unknown integer type: %s", originalType)
+	return "", fmt.Errorf("unknown type: '%s'", originalType)
 }
 
 func (v *MySQLVisitor) setColumnAttributes(column *types.AntlrColumn, originalType string, length int, scale int) {
 	switch originalType {
 	case "char", "varchar", "string", "text", "tinytext", "mediumtext", "longtext":
 		column.StringLength = If(length > 0 && length < 50, length, 50)
+	case "boolean":
+		column.MinInteger = 0
+		column.MaxInteger = 1
 	case "tinyint":
 		column.MaxInteger = math.MaxInt8
 	case "smallint":

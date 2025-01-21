@@ -175,7 +175,7 @@ func (v *MssqlVisitor) extractOriginalType(ctx *parser.Data_typeContext) (string
 func (v *MssqlVisitor) mapSimplifiedType(originalType string) (string, error) {
 	simplifiedType, exists := types.TSqlTypeMap[originalType]
 	if !exists {
-		return "", fmt.Errorf("unsupported data type: %s", originalType)
+		return "", fmt.Errorf("unknown type: '%s'", originalType)
 	}
 	return simplifiedType, nil
 }

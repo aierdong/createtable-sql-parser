@@ -210,7 +210,7 @@ func (v *OracleVisitor) parseTypeString(typeStr string) (string, int, int, error
 func (v *OracleVisitor) mapColumnType(originalType string) (*types.AntlrColumn, error) {
 	simplifiedType, exists := types.PLSqlTypeMap[originalType]
 	if !exists {
-		return nil, fmt.Errorf("unsupported data type: %s", originalType)
+		return nil, fmt.Errorf("unknown type: '%s'", originalType)
 	}
 
 	return &types.AntlrColumn{DataType: simplifiedType}, nil

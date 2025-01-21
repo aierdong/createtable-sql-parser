@@ -22,6 +22,7 @@ var MySQLTypeMap = map[string]DbType{
 	"datetime":   DateTime,
 	"timestamp":  DateTime,
 	"time":       Time,
+	"boolean":    Boolean,
 }
 
 var PgTypeMap = map[string]DbType{
