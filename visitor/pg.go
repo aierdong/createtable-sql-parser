@@ -3,13 +3,14 @@ package visitor
 import (
 	"errors"
 	"fmt"
-	parser "github.com/aierdong/createtable-sql-parser/parser/pg"
-	"github.com/aierdong/createtable-sql-parser/types"
-	"github.com/antlr4-go/antlr/v4"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
+
+	parser "github.com/aierdong/createtable-sql-parser/parser/pg"
+	"github.com/aierdong/createtable-sql-parser/types"
+	"github.com/antlr4-go/antlr/v4"
 )
 
 type PgVisitor struct {
@@ -27,9 +28,18 @@ func ParsePgSql(sql string) (table *types.AntlrTable, err error) {
 		}
 	}()
 
-	sqls := strings.Split(sql, ";")
+	lines := strings.Split(sql, ";")
+	sqls := []string{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "--") || line == "" {
+			continue
+		}
+		sqls = append(sqls, line)
+	}
 
 	for _, s := range sqls {
+		s = strings.TrimSpace(s)
 		if len(s) > 12 && strings.ToUpper(s[:12]) == "CREATE TABLE" {
 			table, err = parsePgTable(s)
 			if err != nil {
@@ -151,11 +161,15 @@ func (v *PgVisitor) VisitTypename(ctx *parser.TypenameContext) interface{} {
 }
 
 func (v *PgVisitor) VisitCommentstmt(ctx *parser.CommentstmtContext) interface{} {
-	arr := strings.Split(ctx.Any_name().GetText(), ".")
-
 	if ctx.COLUMN() != nil {
+		// 获取完整的列名路径
+		fullName := ctx.Any_name().GetText()
+		// 分割并获取最后一个部分作为列名
+		parts := strings.Split(fullName, ".")
+		columnName := strings.Trim(parts[len(parts)-1], "\"")
+
 		v.Column = &types.AntlrColumn{
-			Name:    strings.Trim(arr[len(arr)-1], "\""),
+			Name:    columnName,
 			Comment: strings.Trim(ctx.Comment_text().GetText(), "'"),
 		}
 	}
