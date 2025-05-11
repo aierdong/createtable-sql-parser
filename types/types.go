@@ -10,6 +10,7 @@ type AntlrColumn struct {
 	Scale         int
 	Comment       string
 	AutoIncrement bool
+	IsPrimaryKey  bool // 标识该列是否为主键
 }
 
 type AntlrTable struct {

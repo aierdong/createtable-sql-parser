@@ -83,6 +83,8 @@ func ParsePgSql(sql string) (table *types.AntlrTable, err error) {
 }
 
 func (v *PgVisitor) VisitCreatestmt(ctx *parser.CreatestmtContext) interface{} {
+	fmt.Printf("开始解析 CREATE TABLE 语句: %s\n", ctx.GetText())
+
 	if ctx.TABLE() == nil {
 		v.Err = errors.New("not a create table statement")
 		return nil
@@ -98,10 +100,46 @@ func (v *PgVisitor) VisitCreatestmt(ctx *parser.CreatestmtContext) interface{} {
 	}
 
 	for _, child := range tbl.GetChild(0).GetChildren() {
+		var text string
+		if ruleNode, ok := child.(antlr.RuleNode); ok {
+			text = ruleNode.GetText()
+		} else if tokenNode, ok := child.(antlr.TerminalNode); ok {
+			text = tokenNode.GetText()
+		} else {
+			text = fmt.Sprintf("%v", child)
+		}
+		fmt.Printf("处理表元素: %s (类型: %T)\n", text, child)
+
 		if ele, ok := child.(*parser.TableelementContext); ok {
 			if col, ok := ele.GetChild(0).(*parser.ColumnDefContext); ok {
 				if err := col.Accept(v); err != nil {
 					return err
+				}
+			}
+			// 处理表级别的主键约束
+			if constraint, ok := ele.GetChild(0).(*parser.TableconstraintContext); ok {
+				fmt.Printf("处理表约束: %s\n", constraint.GetText())
+				constraintText := strings.ToUpper(constraint.GetText())
+				if strings.Contains(constraintText, "PRIMARY KEY") || strings.Contains(constraintText, "PRIMARYKEY") {
+					fmt.Printf("找到主键约束: %s\n", constraintText)
+					// 获取主键列名
+					parts := strings.Split(constraintText, "(")
+					if len(parts) > 1 {
+						columnNames := strings.Trim(strings.TrimSpace(parts[1]), ")")
+						fmt.Printf("主键列名: %s\n", columnNames)
+						for _, colName := range strings.Split(columnNames, ",") {
+							columnName := strings.Trim(strings.TrimSpace(colName), "\"")
+							columnName = strings.ToLower(columnName) // 转换为小写以匹配
+							// 在已解析的列中查找并标记主键
+							for _, col := range v.Table.Columns {
+								if strings.ToLower(col.Name) == columnName {
+									col.IsPrimaryKey = true
+									fmt.Printf("设置表级主键: %s\n", col.Name)
+									break
+								}
+							}
+						}
+					}
 				}
 			}
 		}
@@ -125,9 +163,22 @@ func (v *PgVisitor) VisitQualified_name(ctx *parser.Qualified_nameContext) inter
 
 func (v *PgVisitor) VisitColumnDef(ctx *parser.ColumnDefContext) interface{} {
 	col := &types.AntlrColumn{}
+	fmt.Printf("开始解析列定义: %s\n", ctx.GetText())
+
 	for _, child := range ctx.GetChildren() {
+		var text string
+		if ruleNode, ok := child.(antlr.RuleNode); ok {
+			text = ruleNode.GetText()
+		} else if tokenNode, ok := child.(antlr.TerminalNode); ok {
+			text = tokenNode.GetText()
+		} else {
+			text = fmt.Sprintf("%v", child)
+		}
+		fmt.Printf("处理子节点: %s (类型: %T)\n", text, child)
+
 		if ele, ok := child.(*parser.ColidContext); ok {
 			col.Name = strings.Trim(ele.GetText(), "\"")
+			fmt.Printf("找到列名: %s\n", col.Name)
 			continue
 		}
 		if ele, ok := child.(*parser.TypenameContext); ok {
@@ -137,8 +188,18 @@ func (v *PgVisitor) VisitColumnDef(ctx *parser.ColumnDefContext) interface{} {
 				col.StringLength = tc.StringLength
 				col.Scale = tc.Scale
 				col.AutoIncrement = tc.AutoIncrement
+				fmt.Printf("设置列类型: %s\n", col.DataType)
 			}
 			continue
+		}
+		// 处理列约束
+		if ele, ok := child.(*parser.ColquallistContext); ok {
+			fmt.Printf("处理列约束: %s\n", ele.GetText())
+			constraintText := strings.ToUpper(ele.GetText())
+			if strings.Contains(constraintText, "PRIMARY KEY") || strings.Contains(constraintText, "PRIMARYKEY") {
+				col.IsPrimaryKey = true
+				fmt.Printf("设置列级主键: %s\n", col.Name)
+			}
 		}
 	}
 
